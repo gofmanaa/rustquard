@@ -10,6 +10,8 @@ default-members = ["rustguard", "rustguard-common"]
 [workspace.package]
 license = "MIT OR Apache-2.0"
 edition = "2024"
+authors = ["Oleksandr Hofman"]
+
 
 [workspace.dependencies]
 aya = { git = "https://github.com/aya-rs/aya", default-features = false }
@@ -29,6 +31,7 @@ libc = { version = "0.2.159", default-features = false }
 log = { version = "0.4.22", default-features = false }
 tokio = { version = "1.40.0", default-features = false }
 which = { version = "8.0.4", default-features = false }
+chrono = { version = "0.4", default-features = false }
 
 [profile.release.package.rustguard-ebpf]
 debug = 2

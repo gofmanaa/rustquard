@@ -13,7 +13,6 @@ unsafe impl aya::Pod for BanValue {}
 #[derive(Clone, Copy)]
 pub struct StatsValue {
     pub packets_dropped: u64,
-    pub bytes_dropped: u64,
 }
 
 #[cfg(feature = "user")]

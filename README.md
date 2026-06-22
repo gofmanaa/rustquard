@@ -1,5 +1,19 @@
 # rustguard
 
+# Install
+
+cargo build --release
+sudo cp target/release/rustguard /usr/local/bin/
+sudo cp rustguard.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable rustguard
+sudo systemctl start rustguard
+
+check logs:
+journalctl -u rustguard -f
+
+
 ## Prerequisites
 
 1. stable rust toolchains: `rustup toolchain install stable`

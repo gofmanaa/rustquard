@@ -3,6 +3,8 @@ use aya::{
     maps::HashMap,
     programs::{Xdp, XdpMode},
 };
+use aya_log::EbpfLogger;
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 #[rustfmt::skip]
 use log::{debug, info, warn};
@@ -19,7 +21,12 @@ use tokio::{
 const SOCKET_PATH: &str = "/tmp/rustguard.sock";
 
 #[derive(Debug, Parser)]
-#[command(author, version, about, long_about = None, arg_required_else_help = true)]
+#[command(
+    author,
+    version,
+    about = "IP blocking CLI and daemon for Linux",
+    subcommand_required = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -71,24 +78,20 @@ enum DaemonResponse {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if let Commands::Daemon { .. } = &cli.command {
-        env_logger::init();
-    }
-
     match cli.command {
         Commands::Daemon { iface } => {
             run_daemon(iface).await?;
         }
         cmd => {
-            send_command(cmd).await?;
+            send_command(SOCKET_PATH, cmd).await?;
         }
     }
 
     Ok(())
 }
 
-async fn send_command(cmd: Commands) -> anyhow::Result<()> {
-    let mut stream = UnixStream::connect(SOCKET_PATH)
+async fn send_command(soket: &str, cmd: Commands) -> anyhow::Result<()> {
+    let mut stream = UnixStream::connect(soket)
         .await
         .context("Failed to connect to rustguard daemon. Is it running?")?;
 
@@ -143,15 +146,13 @@ async fn send_command(cmd: Commands) -> anyhow::Result<()> {
 }
 
 fn get_boot_time_ns() -> u64 {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
-    (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
+    let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    now as u64
 }
 
 async fn run_daemon(iface: String) -> anyhow::Result<()> {
+    env_logger::init();
+
     // Bump the memlock rlimit.
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
@@ -166,10 +167,23 @@ async fn run_daemon(iface: String) -> anyhow::Result<()> {
         env!("OUT_DIR"),
         "/rustguard"
     )))?;
-    if let Err(e) = aya_log::EbpfLogger::init(&mut ebpf) {
-        warn!("failed to initialize eBPF logger: {e}");
+    match EbpfLogger::init(&mut ebpf) {
+        Err(e) => {
+            // This can happen if you remove all log statements from your eBPF program.
+            warn!("failed to initialize eBPF logger: {e}");
+        }
+        Ok(logger) => {
+            let mut logger =
+                tokio::io::unix::AsyncFd::with_interest(logger, tokio::io::Interest::READABLE)?;
+            tokio::task::spawn(async move {
+                loop {
+                    let mut guard = logger.readable_mut().await.unwrap();
+                    guard.get_inner_mut().flush();
+                    guard.clear_ready();
+                }
+            });
+        }
     }
-
     let program: &mut Xdp = ebpf.program_mut("rustguard").unwrap().try_into()?;
     program.load()?;
     program
@@ -184,8 +198,14 @@ async fn run_daemon(iface: String) -> anyhow::Result<()> {
         ebpf.take_map("STATS").unwrap().try_into()?;
 
     // Setup UDS
+    info!("starting daemon on iface={}", iface);
     let _ = std::fs::remove_file(SOCKET_PATH);
+
     let listener = UnixListener::bind(SOCKET_PATH)?;
+    std::fs::set_permissions(
+        SOCKET_PATH,
+        std::os::unix::fs::PermissionsExt::from_mode(0o660),
+    )?;
     info!("Daemon started. Listening on {}", SOCKET_PATH);
 
     // Accept connections
@@ -223,7 +243,6 @@ async fn run_daemon(iface: String) -> anyhow::Result<()> {
 
                             let value = BanValue { end_time };
                             let _ = banned_ips.insert(u32::from(ip), value, 0);
-
                             DaemonResponse::Ok
                         }
                         Err(_) => DaemonResponse::Error("invalid ip".into()),
@@ -247,8 +266,8 @@ async fn run_daemon(iface: String) -> anyhow::Result<()> {
 
                     DaemonRequest::Stats => match stats.get(&0, 0) {
                         Ok(v) => DaemonResponse::Stats(format!(
-                            "Packets dropped: {}, Bytes dropped: {}",
-                            v.packets_dropped, v.bytes_dropped
+                            "Packets dropped: {}",
+                            v.packets_dropped,
                         )),
                         Err(_) => DaemonResponse::Stats("No stats".into()),
                     },
@@ -284,4 +303,121 @@ async fn run_daemon(iface: String) -> anyhow::Result<()> {
     let _ = std::fs::remove_file(SOCKET_PATH);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::UnixListener,
+    };
+
+    use super::*;
+
+    async fn spawn_fake_daemon(path: &str, response: DaemonResponse) {
+        let _ = fs::remove_file(path);
+        let listener = UnixListener::bind(path).unwrap();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            let len = stream.read_u32().await.unwrap();
+            let mut buf = vec![0u8; len as usize];
+            stream.read_exact(&mut buf).await.unwrap();
+
+            let _req: DaemonRequest = serde_json::from_slice(&buf).unwrap();
+
+            let resp_bytes = serde_json::to_vec(&response).unwrap();
+            stream.write_u32(resp_bytes.len() as u32).await.unwrap();
+            stream.write_all(&resp_bytes).await.unwrap();
+            let _ = stream.flush().await;
+        });
+    }
+
+    fn test_socket_path(name: &str) -> String {
+        format!("/tmp/rustguard_test_{}.sock", name)
+    }
+
+    #[tokio::test]
+    async fn test_daemon_request_serialization() {
+        let req = DaemonRequest::Ban {
+            target: "1.2.3.4".into(),
+            ttl: Some(10),
+        };
+
+        let bytes = serde_json::to_vec(&req).unwrap();
+        let de: DaemonRequest = serde_json::from_slice(&bytes).unwrap();
+
+        match de {
+            DaemonRequest::Ban { target, ttl } => {
+                assert_eq!(target, "1.2.3.4");
+                assert_eq!(ttl, Some(10));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_boot_time_monotonic_behavior() {
+        let a = get_boot_time_ns();
+        let b = get_boot_time_ns();
+        assert!(b >= a);
+    }
+
+    #[tokio::test]
+    async fn test_send_command_ok() {
+        let soket = test_socket_path("send_command_ok");
+        spawn_fake_daemon(&soket, DaemonResponse::Ok).await;
+
+        let cmd = Commands::Ban {
+            target: "1.2.3.4".into(),
+            ttl: Some(5),
+        };
+
+        let res = send_command(&soket, cmd).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_command_list() {
+        let soket = test_socket_path("send_command_list");
+        spawn_fake_daemon(&soket, DaemonResponse::List(vec!["1.2.3.4".into()])).await;
+
+        let cmd = Commands::List;
+        let res = send_command(&soket, cmd).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_command_stats() {
+        let soket = test_socket_path("send_command_state");
+        spawn_fake_daemon(&soket, DaemonResponse::Stats("ok".into())).await;
+
+        let cmd = Commands::Stats;
+        let res = send_command(&soket, cmd).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_command_error_variant() {
+        let soket = test_socket_path("send_command_error_variant");
+        spawn_fake_daemon(&soket, DaemonResponse::Error("fail".into())).await;
+
+        let cmd = Commands::Unban {
+            target: "1.2.3.4".into(),
+        };
+
+        let res = send_command(&soket, cmd).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_command_connection_fail() {
+        let cmd = Commands::List;
+        let soket = test_socket_path("send_command_connect_fail");
+        let res = send_command(&soket, cmd).await;
+        assert!(res.is_err());
+    }
 }
