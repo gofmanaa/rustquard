@@ -1,0 +1,21 @@
+[Unit]
+Description=RustGuard IP Filtering Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rustguard daemon --iface eth0
+Restart=always
+RestartSec=2
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# Socket cleanup safety
+RuntimeDirectory=rustguard
+
+[Install]
+WantedBy=multi-user.target
