@@ -16,8 +16,8 @@ use crate::{
 #[map(name = "EVENTS")]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
 
-#[fexit(function = "tcp_v4_connect")]
-pub fn tcp_v4_connect(ctx: FExitContext) -> u32 {
+#[fexit(function = "tcp_v4_connect_exit")]
+pub fn tcp_v4_connect_exit(ctx: FExitContext) -> u32 {
     match try_tcp_v4_connect_exit(ctx) {
         Ok(_) => 0,
         Err(_) => 0,

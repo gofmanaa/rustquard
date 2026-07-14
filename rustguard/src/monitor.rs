@@ -18,7 +18,10 @@ pub fn monitor_run() -> anyhow::Result<()> {
 
     let btf = Btf::from_sys_fs()?;
 
-    let prog: &mut FExit = ebpf.program_mut("tcp_v4_connect").unwrap().try_into()?;
+    let prog: &mut FExit = ebpf
+        .program_mut("tcp_v4_connect_exit")
+        .unwrap()
+        .try_into()?;
 
     prog.load(
         "tcp_v4_connect", // kernel function name
