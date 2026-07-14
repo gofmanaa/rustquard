@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod event;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BanValue {

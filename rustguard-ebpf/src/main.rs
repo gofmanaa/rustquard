@@ -19,6 +19,24 @@ use network_types::{
 };
 use rustguard_common::{BanValue, StatsValue};
 
+mod fexit;
+
+mod kernel;
+mod socket;
+
+#[allow(
+    clippy::all,
+    dead_code,
+    improper_ctypes_definitions,
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    unnecessary_transmutes,
+    unsafe_op_in_unsafe_fn,
+)]
+#[rustfmt::skip]
+mod vmlinux;
+
 #[map(name = "BANNED_IPS")]
 static BANNED_IPS: HashMap<u32, BanValue> = HashMap::with_max_entries(1024, 0); //4096
 

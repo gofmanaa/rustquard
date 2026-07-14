@@ -18,6 +18,10 @@ use tokio::{
     signal,
 };
 
+use crate::monitor::monitor_run;
+
+mod monitor;
+
 const SOCKET_PATH: &str = "/tmp/rustguard.sock";
 
 #[derive(Debug, Parser)]
@@ -56,6 +60,7 @@ enum Commands {
     List,
     /// Show statistics
     Stats,
+    Monitor,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,6 +86,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Daemon { iface } => {
             run_daemon(iface).await?;
+        }
+        Commands::Monitor => {
+            monitor_run()?;
         }
         cmd => {
             send_command(SOCKET_PATH, cmd).await?;
