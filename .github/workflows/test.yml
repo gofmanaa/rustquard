@@ -27,11 +27,9 @@ jobs:
             pkg-config \
             libsystemd-dev
 
-      # - name: Install aya-tool
-      #   run: |
-      #     cargo install \
-      #       --git https://github.com/aya-rs/aya \
-      #       aya-tool
+      - name: Install aya-tool
+        run: |
+          cargo install --locked bpf-linker
 
       # - name: Generate vmlinux bindings
       #   run: |
