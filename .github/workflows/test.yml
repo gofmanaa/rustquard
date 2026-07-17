@@ -28,7 +28,10 @@ jobs:
             libsystemd-dev
 
       - name: Install aya-tool
-        run: cargo install aya-tool
+        run: |
+          cargo install \
+            --git https://github.com/aya-rs/aya \
+            aya-tool
 
       - name: Generate vmlinux bindings
         run: |
