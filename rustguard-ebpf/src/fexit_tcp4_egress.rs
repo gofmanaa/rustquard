@@ -1,20 +1,13 @@
 use core::ffi::c_long;
 
-use aya_ebpf::{
-    macros::{fexit, map},
-    maps::RingBuf,
-    programs::FExitContext,
-};
+use aya_ebpf::{macros::fexit, programs::FExitContext};
 use rustguard_common::event::{EventType, NetEvent};
 
 use crate::{
     kernel::{current_comm, pid, tid, timestamp_ns, uid},
-    socket::{fill_socket, protocol},
+    socket::{EVENTS, fill_socket, protocol},
     vmlinux::sock,
 };
-
-#[map(name = "EVENTS")]
-static EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
 
 #[fexit(function = "tcp_v4_connect_exit")]
 pub fn tcp_v4_connect_exit(ctx: FExitContext) -> u32 {

@@ -7,34 +7,41 @@ on:
 name: CI
 
 jobs:
-  test:
-    name: Test Suite
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rustfmt
-      - name: Enforce formatting
+          components: rust-src, rustfmt, clippy
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            llvm \
+            libelf-dev \
+            pkg-config \
+            libsystemd-dev
+
+      - name: Install aya-tool
+        run: |
+          cargo install --locked bpf-linker
+
+      # - name: Generate vmlinux bindings
+      #   run: |
+      #     aya-tool generate task_struct > rustguard-ebpf/src/vmlinux.rs
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Rustfmt
         run: cargo fmt --all --check
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Linting
+      - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test

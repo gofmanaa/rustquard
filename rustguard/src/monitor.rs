@@ -3,12 +3,14 @@ use std::{
     fs, mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context;
 use aya::{Btf, maps::RingBuf, programs::FExit};
-use rustguard_common::event::NetEvent;
+use aya_log::EbpfLogger;
+use log::warn;
+use rustguard_common::event::{EventType, NetEvent};
 
 pub fn monitor_run() -> anyhow::Result<()> {
     let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
@@ -16,30 +18,55 @@ pub fn monitor_run() -> anyhow::Result<()> {
         "/rustguard"
     )))?;
 
+    match EbpfLogger::init(&mut ebpf) {
+        Err(e) => {
+            // This can happen if you remove all log statements from your eBPF program.
+            warn!("failed to initialize eBPF logger: {e}");
+        }
+        Ok(logger) => {
+            let mut logger =
+                tokio::io::unix::AsyncFd::with_interest(logger, tokio::io::Interest::READABLE)?;
+            tokio::task::spawn(async move {
+                loop {
+                    let mut guard = logger.readable_mut().await.unwrap();
+                    guard.get_inner_mut().flush();
+                    guard.clear_ready();
+                }
+            });
+        }
+    }
+
     let btf = Btf::from_sys_fs()?;
 
-    let prog: &mut FExit = ebpf
+    let prog_egress: &mut FExit = ebpf
         .program_mut("tcp_v4_connect_exit")
         .unwrap()
         .try_into()?;
 
-    prog.load(
+    prog_egress.load(
         "tcp_v4_connect", // kernel function name
         &btf,             // kernel BTF
     )?;
-    prog.attach()?;
+    prog_egress.attach()?;
 
-    // let prog: &mut KProbe = ebpf.program_mut("tcp_v4_connect").unwrap().try_into()?;
-    // prog.load()?;
-    // prog.attach("tcp_v4_connect", 0)?;
+    let prog_accept: &mut FExit = ebpf
+        .program_mut("incoming_connection")
+        .unwrap()
+        .try_into()?;
+
+    prog_accept.load(
+        "inet_csk_accept", // kernel function name
+        &btf,              // kernel BTF
+    )?;
+    prog_accept.attach()?;
 
     let mut ring = RingBuf::try_from(ebpf.take_map("EVENTS").context("EVENTS map missing")?)?;
 
     let mut cache = ProcessCache::default();
 
     println!(
-        "{:<16} {:<28} {:>6} {:>6} {:<10} {:<6} {:<7} {:<22} -> {:<22}",
-        "COMM", "EXE", "PID", "TID", "EVENT", "PROTO", "DIR", "SOURCE", "DESTINATION"
+        "{:<12} {:<16} {:>6} {:<5} {:<9} {:<10} CONNECTION",
+        "TIME", "COMM", "PID", "PROTO", "EVENT", "RESULT",
     );
 
     loop {
@@ -52,24 +79,31 @@ pub fn monitor_run() -> anyhow::Result<()> {
 
             let event = unsafe { &*(bytes.as_ptr() as *const NetEvent) };
 
-            let exe = cache.exe(event.pid);
-
-            println!(
-                "{:<16} {:<28} {:>6} {:>6} {:<10} {:<6} {:<7} {:<22} -> {:<22}",
-                comm_to_string(&event.comm),
-                exe,
-                event.pid,
-                event.tid,
-                event.event,
-                event.protocol,
-                event.direction,
-                format!("{}:{}", ip_to_string(&event.src_ip), event.src_port),
-                format!("{}:{}", ip_to_string(&event.dst_ip), event.dst_port),
-            );
+            print_event(event, &mut cache);
         }
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn print_event(event: &NetEvent, cache: &mut ProcessCache) {
+    let _exe = cache.exe(event.pid);
+
+    let src = format!("{}:{}", ip_to_string(&event.src_ip), event.src_port);
+    let dst = format!("{}:{}", ip_to_string(&event.dst_ip), event.dst_port);
+
+    println!(
+        "{:<12} {:<16} {:>6} {:<5} {:<9} {:<10} {} {} {}",
+        now_string(),
+        comm_to_string(&event.comm),
+        event.pid,
+        event.protocol,
+        event.event,
+        result_string(event.ret),
+        src,
+        arrow(event.event),
+        dst,
+    );
 }
 
 fn comm_to_string(comm: &[u8]) -> String {
@@ -113,5 +147,36 @@ impl ProcessCache {
         self.cache.insert(pid, (exe.clone(), Instant::now()));
 
         exe
+    }
+}
+
+fn now_string() -> String {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+    let secs = now.as_secs() % 86_400;
+    let ms = now.subsec_millis();
+
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        secs / 3600,
+        (secs / 60) % 60,
+        secs % 60,
+        ms
+    )
+}
+
+fn result_string(ret: i32) -> String {
+    if ret == 0 {
+        "OK".into()
+    } else {
+        format!("ERR({})", ret)
+    }
+}
+
+fn arrow(event: EventType) -> &'static str {
+    match event {
+        EventType::Connect => "─────▶",
+        EventType::Accept => "◀─────",
+        _ => "──────",
     }
 }

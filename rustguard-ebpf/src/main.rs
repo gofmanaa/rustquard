@@ -19,7 +19,8 @@ use network_types::{
 };
 use rustguard_common::{BanValue, StatsValue};
 
-mod fexit;
+mod fexit_tcp4_accept;
+mod fexit_tcp4_egress;
 
 mod kernel;
 mod socket;
