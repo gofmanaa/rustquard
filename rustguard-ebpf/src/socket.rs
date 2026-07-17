@@ -1,9 +1,7 @@
-use aya_ebpf::helpers::bpf_probe_read_kernel;
+use aya_ebpf::{helpers::bpf_probe_read_kernel, macros::map, maps::RingBuf};
 use rustguard_common::event::*;
 
 use crate::vmlinux::{sock, sock_common};
-
-use aya_ebpf::{macros::map, maps::RingBuf};
 
 #[map(name = "EVENTS")]
 pub static EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
