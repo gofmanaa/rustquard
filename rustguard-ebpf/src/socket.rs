@@ -3,6 +3,11 @@ use rustguard_common::event::*;
 
 use crate::vmlinux::{sock, sock_common};
 
+use aya_ebpf::{macros::map, maps::RingBuf};
+
+#[map(name = "EVENTS")]
+pub static EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
+
 #[inline(always)]
 pub fn fill_socket(event: &mut NetEvent, sk: *const sock) -> Result<(), i64> {
     let common: sock_common = unsafe { bpf_probe_read_kernel(&(*sk).__sk_common)? };

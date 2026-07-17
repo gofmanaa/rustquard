@@ -82,6 +82,7 @@ enum DaemonResponse {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    env_logger::init();
 
     match cli.command {
         Commands::Daemon { iface } => {

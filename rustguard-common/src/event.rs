@@ -148,33 +148,6 @@ pub struct NetEvent {
 }
 
 impl NetEvent {
-    // #[inline]
-    // pub const fn new() -> Self {
-    //     Self {
-    //         timestamp_ns: 0,
-    //         socket_cookie: 0,
-
-    //         pid: 0,
-    //         tid: 0,
-    //         uid: 0,
-
-    //         event: EventType::Unknown,
-    //         protocol: TransportProtocol::Unknown,
-    //         direction: Direction::Unknown,
-
-    //         flags: 0,
-    //         bytes: 0,
-
-    //         src_ip: [0; IP_ADDR_LEN],
-    //         dst_ip: [0; IP_ADDR_LEN],
-
-    //         src_port: 0,
-    //         dst_port: 0,
-
-    //         comm: [0; TASK_COMM_LEN],
-    //     }
-    // }
-
     #[inline]
     pub const fn size() -> usize {
         mem::size_of::<Self>()
